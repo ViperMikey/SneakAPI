@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config(); const billingRoutes = require('./src/routes/billing'); const stripeWebhook = require('./src/routes/stripeWebhook');
 
 const express = require('express');
 const cors = require('cors');
@@ -10,8 +10,16 @@ const {
 const app = express();
 
 app.use(cors());
+
+app.post(
+  '/api/billing/webhook',
+  express.raw({ type: 'application/json' }),
+  stripeWebhook
+);
+
 app.use(express.json());
 
+app.use('/api/billing', billingRoutes);
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,

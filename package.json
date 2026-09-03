@@ -29,7 +29,7 @@
   },
   "homepage": "https://github.com/druv5319/Sneaks-API#readme",
   "dependencies": {
-    "@supabase/supabase-js": "^2.114.0",
+    "@supabase/supabase-js": "^2.115.0",
     "cheerio": "^1.0.0-rc.3",
     "core-util-is": "^1.0.2",
     "cors": "^2.8.6",
@@ -37,6 +37,7 @@
     "express": "^4.22.2",
     "got": "^11.6.0",
     "mongoose": "^5.10.3",
-    "request": "^2.65.0"
+    "request": "^2.65.0",
+    "stripe": "^22.6.1"
   }
 }
