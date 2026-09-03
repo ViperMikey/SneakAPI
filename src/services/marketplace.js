@@ -1,10 +1,23 @@
 const goat = require('../connectors/goat');
 const flightclub = require('../connectors/flightclub');
 const stadiumgoods = require('../connectors/stadiumgoods');
+const cache = require('./cache');
 
 async function getMarketData(styleId) {
   if (!styleId) {
     throw new Error('getMarketData requires a style ID');
+  }
+
+  const normalizedStyleId = styleId.toUpperCase();
+  const cacheKey = `market:${normalizedStyleId}`;
+
+  const cached = cache.get(cacheKey);
+
+  if (cached) {
+    return {
+      ...cached,
+      cache: 'HIT'
+    };
   }
 
   const results = await Promise.allSettled([
@@ -15,8 +28,8 @@ async function getMarketData(styleId) {
 
   const [goatResult, flightclubResult, stadiumResult] = results;
 
-  return {
-    styleId,
+  const result = {
+    styleId: normalizedStyleId,
 
     marketplaces: {
       goat: {
@@ -80,8 +93,13 @@ async function getMarketData(styleId) {
       }
     },
 
-    fetchedAt: new Date().toISOString()
+    fetchedAt: new Date().toISOString(),
+    cache: 'MISS'
   };
+
+  cache.set(cacheKey, result);
+
+  return result;
 }
 
 module.exports = {
