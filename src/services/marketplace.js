@@ -1,7 +1,9 @@
 const goat = require('../connectors/goat');
 const flightclub = require('../connectors/flightclub');
 const stadiumgoods = require('../connectors/stadiumgoods');
+
 const cache = require('./cache');
+const persistentCache = require('./persistentCache');
 
 async function getMarketData(styleId) {
   if (!styleId) {
@@ -11,22 +13,48 @@ async function getMarketData(styleId) {
   const normalizedStyleId = styleId.toUpperCase();
   const cacheKey = `market:${normalizedStyleId}`;
 
-  const cached = cache.get(cacheKey);
+  // Fastest: current server memory.
+  const memoryResult = cache.get(cacheKey);
 
-  if (cached) {
+  if (memoryResult) {
     return {
-      ...cached,
-      cache: 'HIT'
+      ...memoryResult,
+      cache: 'MEMORY_HIT'
     };
   }
 
+  // Next: persistent Supabase cache.
+  try {
+    const persistentResult =
+      await persistentCache.get(normalizedStyleId);
+
+    if (persistentResult) {
+      cache.set(cacheKey, persistentResult);
+
+      return {
+        ...persistentResult,
+        cache: 'SUPABASE_HIT'
+      };
+    }
+  } catch (error) {
+    console.error(
+      'Supabase cache read failed:',
+      error.message
+    );
+  }
+
+  // Nothing cached: get fresh marketplace data.
   const results = await Promise.allSettled([
-    goat.findProduct(styleId),
-    flightclub.findProduct(styleId),
-    stadiumgoods.getProductWithPrices(styleId)
+    goat.findProduct(normalizedStyleId),
+    flightclub.findProduct(normalizedStyleId),
+    stadiumgoods.getProductWithPrices(normalizedStyleId)
   ]);
 
-  const [goatResult, flightclubResult, stadiumResult] = results;
+  const [
+    goatResult,
+    flightclubResult,
+    stadiumResult
+  ] = results;
 
   const result = {
     styleId: normalizedStyleId,
@@ -34,7 +62,8 @@ async function getMarketData(styleId) {
     marketplaces: {
       goat: {
         status:
-          goatResult.status === 'fulfilled' && goatResult.value
+          goatResult.status === 'fulfilled' &&
+          goatResult.value
             ? 'catalog_only'
             : 'unavailable',
 
@@ -75,9 +104,7 @@ async function getMarketData(styleId) {
 
         liveSizePricing:
           stadiumResult.status === 'fulfilled' &&
-          stadiumResult.value
-            ? true
-            : false
+          Boolean(stadiumResult.value)
       },
 
       stockx: {
@@ -93,13 +120,27 @@ async function getMarketData(styleId) {
       }
     },
 
-    fetchedAt: new Date().toISOString(),
-    cache: 'MISS'
+    fetchedAt: new Date().toISOString()
   };
 
   cache.set(cacheKey, result);
 
-  return result;
+  try {
+    await persistentCache.set(
+      normalizedStyleId,
+      result
+    );
+  } catch (error) {
+    console.error(
+      'Supabase cache write failed:',
+      error.message
+    );
+  }
+
+  return {
+    ...result,
+    cache: 'MISS'
+  };
 }
 
 module.exports = {
