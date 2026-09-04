@@ -83,7 +83,6 @@ async function getAuthenticatedUser(req) {
       id: payload.sub,
       email
     };
-
   } catch (error) {
     console.error(
       'AUTH TOKEN VERIFICATION ERROR:',
@@ -105,6 +104,14 @@ router.post('/checkout', async (req, res) => {
         success: false,
         error: 'You must be signed in to start a subscription.'
       });
+    }
+
+    if (!process.env.STRIPE_INTRO_PRICE_ID) {
+      throw new Error('Missing STRIPE_INTRO_PRICE_ID');
+    }
+
+    if (!process.env.STRIPE_SECRET_KEY) {
+      throw new Error('Missing STRIPE_SECRET_KEY');
     }
 
     const frontendUrl = (
@@ -183,15 +190,49 @@ router.post('/checkout', async (req, res) => {
     });
 
   } catch (error) {
-    console.error(
-      'STRIPE CHECKOUT ERROR:',
-      error
-    );
+    const message =
+      error instanceof Error
+        ? error.message
+        : String(error);
+
+    const code =
+      error &&
+      typeof error === 'object' &&
+      'code' in error
+        ? error.code
+        : null;
+
+    const type =
+      error &&
+      typeof error === 'object' &&
+      'type' in error
+        ? error.type
+        : null;
+
+    console.error('STRIPE CHECKOUT ERROR:', {
+      message,
+      code,
+      type
+    });
+
+    const sandbox =
+      process.env.STRIPE_SECRET_KEY?.startsWith(
+        'sk_test_'
+      );
 
     return res.status(500).json({
       success: false,
-      error:
-        'Unable to create checkout session.'
+      error: 'Unable to create checkout session.',
+
+      ...(sandbox
+        ? {
+            debug: {
+              message,
+              code,
+              type
+            }
+          }
+        : {})
     });
   }
 });
