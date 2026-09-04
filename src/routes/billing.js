@@ -1,21 +1,19 @@
 const express = require('express');
 const stripe = require('../config/stripe');
-const { createClient } = require('@supabase/supabase-js');
 
 const router = express.Router();
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SECRET_KEY,
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false
-    }
-  }
-);
+let josePromise;
+let remoteJwks;
 
-// Get the real logged-in SneakSnipe user from their Supabase token.
+async function getJose() {
+  if (!josePromise) {
+    josePromise = import('jose');
+  }
+
+  return josePromise;
+}
+
 async function getAuthenticatedUser(req) {
   const authHeader = req.headers.authorization;
 
@@ -29,16 +27,49 @@ async function getAuthenticatedUser(req) {
     return null;
   }
 
-  const {
-    data: { user },
-    error
-  } = await supabase.auth.getUser(token);
+  const authSupabaseUrl = process.env.AUTH_SUPABASE_URL;
 
-  if (error || !user) {
-    return null;
+  if (!authSupabaseUrl) {
+    throw new Error('Missing AUTH_SUPABASE_URL');
   }
 
-  return user;
+  const baseUrl = authSupabaseUrl.replace(/\/+$/, '');
+  const issuer = `${baseUrl}/auth/v1`;
+
+  const { createRemoteJWKSet, jwtVerify } = await getJose();
+
+  if (!remoteJwks) {
+    remoteJwks = createRemoteJWKSet(
+      new URL(`${issuer}/.well-known/jwks.json`)
+    );
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, remoteJwks, {
+      issuer,
+      audience: 'authenticated'
+    });
+
+    if (!payload.sub) {
+      return null;
+    }
+
+    return {
+      id: payload.sub,
+      email:
+        typeof payload.email === 'string'
+          ? payload.email
+          : null
+    };
+
+  } catch (error) {
+    console.error(
+      'AUTH TOKEN VERIFICATION ERROR:',
+      error.message
+    );
+
+    return null;
+  }
 }
 
 router.post('/checkout', async (req, res) => {
@@ -56,73 +87,80 @@ router.post('/checkout', async (req, res) => {
       process.env.FRONTEND_URL || 'https://sneaksnipe.com'
     ).replace(/\/+$/, '');
 
-    // Lovable already sends these URLs.
-    // We only allow them when they point back to the same frontend origin.
     const requestedSuccessUrl = req.body?.successUrl;
     const requestedCancelUrl = req.body?.cancelUrl;
 
     const isAllowedFrontendUrl = (value) => {
-      if (typeof value !== 'string') return false;
+      if (typeof value !== 'string') {
+        return false;
+      }
 
       try {
-        return new URL(value).origin === new URL(frontendUrl).origin;
+        return (
+          new URL(value).origin ===
+          new URL(frontendUrl).origin
+        );
       } catch {
         return false;
       }
     };
 
-    const successUrl = isAllowedFrontendUrl(requestedSuccessUrl)
+    const successUrl = isAllowedFrontendUrl(
+      requestedSuccessUrl
+    )
       ? requestedSuccessUrl
       : `${frontendUrl}/scanner`;
 
-    const cancelUrl = isAllowedFrontendUrl(requestedCancelUrl)
+    const cancelUrl = isAllowedFrontendUrl(
+      requestedCancelUrl
+    )
       ? requestedCancelUrl
       : `${frontendUrl}/plans`;
 
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
+    const session =
+      await stripe.checkout.sessions.create({
+        mode: 'payment',
 
-      customer_creation: 'always',
-      customer_email: user.email,
+        customer_creation: 'always',
+        customer_email: user.email,
 
-      line_items: [
-        {
-          price: process.env.STRIPE_INTRO_PRICE_ID,
-          quantity: 1
+        line_items: [
+          {
+            price:
+              process.env.STRIPE_INTRO_PRICE_ID,
+            quantity: 1
+          }
+        ],
+
+        payment_intent_data: {
+          setup_future_usage: 'off_session'
+        },
+
+        success_url:
+          `${successUrl}${
+            successUrl.includes('?') ? '&' : '?'
+          }checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+
+        cancel_url: cancelUrl,
+
+        metadata: {
+          plan: 'sneaksnipe_intro',
+          intro_days: '7',
+          supabase_user_id: user.id
         }
-      ],
-
-      payment_intent_data: {
-        setup_future_usage: 'off_session'
-      },
-
-      success_url:
-        `${successUrl}${successUrl.includes('?') ? '&' : '?'}checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-
-      cancel_url: cancelUrl,
-
-      metadata: {
-        plan: 'sneaksnipe_intro',
-        intro_days: '7',
-
-        // This ties the Stripe Checkout Session to the real
-        // authenticated Supabase account.
-        supabase_user_id: user.id
-      }
-    });
+      });
 
     return res.json({
       success: true,
-
-      // Lovable's billing.ts expects "url".
       url: session.url,
-
-      // Keep this temporarily so our previous tests don't break.
       checkoutUrl: session.url
     });
 
   } catch (error) {
-    console.error('STRIPE CHECKOUT ERROR:', error);
+    console.error(
+      'STRIPE CHECKOUT ERROR:',
+      error
+    );
 
     return res.status(500).json({
       success: false,
