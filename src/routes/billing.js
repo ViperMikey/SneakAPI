@@ -3,8 +3,8 @@ const stripe = require('../config/stripe');
 
 const router = express.Router();
 
-let josePromise;
-let remoteJwks;
+let josePromise = null;
+let remoteJwks = null;
 
 async function getJose() {
   if (!josePromise) {
@@ -18,12 +18,14 @@ async function getAuthenticatedUser(req) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.error('AUTH ERROR: Missing Authorization header');
     return null;
   }
 
   const token = authHeader.slice(7).trim();
 
   if (!token) {
+    console.error('AUTH ERROR: Empty bearer token');
     return null;
   }
 
@@ -36,36 +38,58 @@ async function getAuthenticatedUser(req) {
   const baseUrl = authSupabaseUrl.replace(/\/+$/, '');
   const issuer = `${baseUrl}/auth/v1`;
 
-  const { createRemoteJWKSet, jwtVerify } = await getJose();
+  const {
+    createRemoteJWKSet,
+    jwtVerify
+  } = await getJose();
 
   if (!remoteJwks) {
     remoteJwks = createRemoteJWKSet(
-      new URL(`${issuer}/.well-known/jwks.json`)
+      new URL(`${issuer}/.well-known/jwks.json`),
+      {
+        timeoutDuration: 15000,
+        cooldownDuration: 30000,
+        cacheMaxAge: 600000
+      }
     );
   }
 
   try {
-    const { payload } = await jwtVerify(token, remoteJwks, {
-      issuer,
-      audience: 'authenticated'
-    });
+    const { payload } = await jwtVerify(
+      token,
+      remoteJwks,
+      {
+        issuer,
+        audience: 'authenticated'
+      }
+    );
 
     if (!payload.sub) {
+      console.error('AUTH ERROR: JWT has no user ID');
+      return null;
+    }
+
+    const email =
+      typeof payload.email === 'string'
+        ? payload.email
+        : null;
+
+    if (!email) {
+      console.error('AUTH ERROR: JWT has no email');
       return null;
     }
 
     return {
       id: payload.sub,
-      email:
-        typeof payload.email === 'string'
-          ? payload.email
-          : null
+      email
     };
 
   } catch (error) {
     console.error(
       'AUTH TOKEN VERIFICATION ERROR:',
-      error.message
+      error instanceof Error
+        ? error.message
+        : String(error)
     );
 
     return null;
@@ -76,7 +100,7 @@ router.post('/checkout', async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
 
-    if (!user || !user.email) {
+    if (!user) {
       return res.status(401).json({
         success: false,
         error: 'You must be signed in to start a subscription.'
@@ -84,11 +108,15 @@ router.post('/checkout', async (req, res) => {
     }
 
     const frontendUrl = (
-      process.env.FRONTEND_URL || 'https://sneaksnipe.com'
+      process.env.FRONTEND_URL ||
+      'https://sneaksnipe.com'
     ).replace(/\/+$/, '');
 
-    const requestedSuccessUrl = req.body?.successUrl;
-    const requestedCancelUrl = req.body?.cancelUrl;
+    const requestedSuccessUrl =
+      req.body?.successUrl;
+
+    const requestedCancelUrl =
+      req.body?.cancelUrl;
 
     const isAllowedFrontendUrl = (value) => {
       if (typeof value !== 'string') {
@@ -105,17 +133,15 @@ router.post('/checkout', async (req, res) => {
       }
     };
 
-    const successUrl = isAllowedFrontendUrl(
-      requestedSuccessUrl
-    )
-      ? requestedSuccessUrl
-      : `${frontendUrl}/scanner`;
+    const successUrl =
+      isAllowedFrontendUrl(requestedSuccessUrl)
+        ? requestedSuccessUrl
+        : `${frontendUrl}/scanner`;
 
-    const cancelUrl = isAllowedFrontendUrl(
-      requestedCancelUrl
-    )
-      ? requestedCancelUrl
-      : `${frontendUrl}/plans`;
+    const cancelUrl =
+      isAllowedFrontendUrl(requestedCancelUrl)
+        ? requestedCancelUrl
+        : `${frontendUrl}/plans`;
 
     const session =
       await stripe.checkout.sessions.create({
@@ -164,7 +190,8 @@ router.post('/checkout', async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      error: 'Unable to create checkout session.'
+      error:
+        'Unable to create checkout session.'
     });
   }
 });
