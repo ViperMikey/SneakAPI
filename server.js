@@ -3,6 +3,7 @@ require('dotenv').config();
 const billingRoutes = require('./src/routes/billing');
 const stripeWebhook = require('./src/routes/stripeWebhook');
 const stockxRoutes = require('./src/routes/stockx');
+const stockxMarketRoutes = require('./src/routes/stockxMarket');
 
 const express = require('express');
 const cors = require('cors');
@@ -25,6 +26,7 @@ app.use(express.json());
 
 app.use('/api/billing', billingRoutes);
 app.use('/api/stockx', stockxRoutes);
+app.use('/api/stockx', stockxMarketRoutes);
 
 app.get('/health', (_req, res) => {
   res.json({
