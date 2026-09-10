@@ -17,14 +17,9 @@ async function getJose() {
   return josePromise;
 }
 
-/*
- * Verify the Supabase access token sent by the SneakSnipe frontend.
- *
- * This keeps billing endpoints tied to the authenticated
- * SneakSnipe account instead of trusting user IDs from the browser.
- */
 async function getAuthenticatedUser(req) {
-  const authHeader = req.headers.authorization;
+  const authHeader =
+    req.headers.authorization;
 
   if (
     !authHeader ||
@@ -37,9 +32,8 @@ async function getAuthenticatedUser(req) {
     return null;
   }
 
-  const token = authHeader
-    .slice(7)
-    .trim();
+  const token =
+    authHeader.slice(7).trim();
 
   if (!token) {
     console.error(
@@ -49,13 +43,6 @@ async function getAuthenticatedUser(req) {
     return null;
   }
 
-  /*
-   * AUTH_SUPABASE_URL is supported for your existing
-   * Render setup.
-   *
-   * Since SneakSnipe auth and backend data now use your
-   * own Supabase project, SUPABASE_URL is also a safe fallback.
-   */
   const authSupabaseUrl =
     process.env.AUTH_SUPABASE_URL ||
     process.env.SUPABASE_URL;
@@ -77,9 +64,6 @@ async function getAuthenticatedUser(req) {
     jwtVerify
   } = await getJose();
 
-  /*
-   * Rebuild the remote JWKS helper if the issuer changes.
-   */
   if (
     !remoteJwks ||
     remoteJwksIssuer !== issuer
@@ -150,9 +134,6 @@ async function getAuthenticatedUser(req) {
 
 /*
  * GET /api/billing/status
- *
- * Returns the authoritative subscription record
- * associated with the authenticated Supabase user.
  */
 router.get(
   '/status',
@@ -183,7 +164,10 @@ router.get(
             stripe_subscription_id
           `
         )
-        .eq('user_id', user.id)
+        .eq(
+          'user_id',
+          user.id
+        )
         .maybeSingle();
 
       if (error) {
@@ -192,12 +176,6 @@ router.get(
         );
       }
 
-      /*
-       * No subscription is valid state.
-       *
-       * "available" is still effectively true because
-       * the billing backend successfully answered.
-       */
       if (!data) {
         return res.json({
           success: true,
@@ -244,11 +222,10 @@ router.get(
 /*
  * POST /api/billing/checkout
  *
- * Creates the $1 SneakSnipe introductory checkout.
+ * Creates the $1 / 7-day introductory checkout.
  *
- * The successful checkout webhook later creates
- * the recurring $30/month subscription with its
- * first recurring charge scheduled 7 days later.
+ * Each Supabase account may redeem this
+ * introductory offer only once.
  */
 router.post(
   '/checkout',
@@ -282,9 +259,8 @@ router.post(
       }
 
       /*
-       * Prevent somebody who already has an active
-       * SneakSnipe membership from accidentally
-       * creating another subscription.
+       * First make sure the account doesn't
+       * already have a live Stripe subscription.
        */
       const {
         data: existingSubscription,
@@ -299,7 +275,10 @@ router.post(
             stripe_subscription_id
           `
         )
-        .eq('user_id', user.id)
+        .eq(
+          'user_id',
+          user.id
+        )
         .maybeSingle();
 
       if (existingError) {
@@ -319,8 +298,51 @@ router.post(
       ) {
         return res.status(409).json({
           success: false,
+          code:
+            'SUBSCRIPTION_ALREADY_EXISTS',
           error:
             'This account already has a SneakSnipe subscription.'
+        });
+      }
+
+      /*
+       * Permanent one-intro-per-account check.
+       *
+       * intro_usage.user_id is the primary key,
+       * and the row is intentionally retained
+       * after cancellation or conversion.
+       */
+      const {
+        data: existingIntro,
+        error: introError
+      } = await supabase
+        .from('intro_usage')
+        .select(
+          `
+            user_id,
+            intro_started_at,
+            intro_ends_at
+          `
+        )
+        .eq(
+          'user_id',
+          user.id
+        )
+        .maybeSingle();
+
+      if (introError) {
+        throw new Error(
+          `Unable to check introductory offer history: ${introError.message}`
+        );
+      }
+
+      if (existingIntro) {
+        return res.status(409).json({
+          success: false,
+          code:
+            'INTRO_ALREADY_USED',
+          error:
+            'This account has already used the $1 introductory offer.'
         });
       }
 
@@ -371,9 +393,11 @@ router.post(
         await stripe.checkout.sessions.create({
           mode: 'payment',
 
-          customer_creation: 'always',
+          customer_creation:
+            'always',
 
-          customer_email: user.email,
+          customer_email:
+            user.email,
 
           line_items: [
             {
@@ -386,9 +410,9 @@ router.post(
           ],
 
           /*
-           * Save the payment method so Stripe
-           * can charge the recurring subscription
-           * after the 7-day introduction.
+           * Store the payment method so the
+           * $30/month subscription can charge
+           * it after the 7-day intro.
            */
           payment_intent_data: {
             setup_future_usage:
@@ -419,8 +443,10 @@ router.post(
 
       return res.json({
         success: true,
-        url: session.url,
-        checkoutUrl: session.url
+        url:
+          session.url,
+        checkoutUrl:
+          session.url
       });
 
     } catch (error) {
@@ -455,7 +481,9 @@ router.post(
       const sandbox =
         process.env
           .STRIPE_SECRET_KEY
-          ?.startsWith('sk_test_');
+          ?.startsWith(
+            'sk_test_'
+          );
 
       return res.status(500).json({
         success: false,
@@ -478,13 +506,6 @@ router.post(
 
 /*
  * POST /api/billing/portal
- *
- * Opens Stripe's secure Customer Portal.
- *
- * Customers can:
- * - update payment method
- * - view invoices
- * - manage/cancel their subscription
  */
 router.post(
   '/portal',
@@ -513,7 +534,10 @@ router.post(
             status
           `
         )
-        .eq('user_id', user.id)
+        .eq(
+          'user_id',
+          user.id
+        )
         .maybeSingle();
 
       if (error) {
@@ -523,7 +547,8 @@ router.post(
       }
 
       if (
-        !subscription?.stripe_customer_id
+        !subscription
+          ?.stripe_customer_id
       ) {
         return res.status(404).json({
           success: false,
@@ -561,8 +586,8 @@ router.post(
           }
         } catch {
           /*
-           * Ignore invalid URL and use
-           * the safe default.
+           * Invalid URL:
+           * use safe default instead.
            */
         }
       }
@@ -579,7 +604,8 @@ router.post(
 
       return res.json({
         success: true,
-        url: portalSession.url
+        url:
+          portalSession.url
       });
 
     } catch (error) {

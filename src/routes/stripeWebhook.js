@@ -125,6 +125,116 @@ function getSubscriptionPeriodEnd(subscription) {
 }
 
 /*
+ * Create the permanent intro-usage record.
+ *
+ * IMPORTANT:
+ * We INSERT only.
+ *
+ * We never upsert/reset this row because:
+ * - webhook retries must not reset usage counters
+ * - a user should only receive one $1 intro
+ * - the row remains after the intro ends
+ */
+async function ensureIntroUsage(
+  supabaseUserId,
+  subscription
+) {
+  const introStartUnix =
+    typeof subscription.trial_start === 'number'
+      ? subscription.trial_start
+      : typeof subscription.start_date === 'number'
+        ? subscription.start_date
+        : null;
+
+  const introEndUnix =
+    typeof subscription.trial_end === 'number'
+      ? subscription.trial_end
+      : null;
+
+  if (
+    introStartUnix === null ||
+    introEndUnix === null
+  ) {
+    throw new Error(
+      `Subscription ${subscription.id} is missing Stripe intro timestamps.`
+    );
+  }
+
+  const introStartedAt =
+    unixToIso(introStartUnix);
+
+  const introEndsAt =
+    unixToIso(introEndUnix);
+
+  if (
+    !introStartedAt ||
+    !introEndsAt
+  ) {
+    throw new Error(
+      `Unable to calculate intro timestamps for subscription ${subscription.id}.`
+    );
+  }
+
+  const {
+    error
+  } = await supabase
+    .from('intro_usage')
+    .insert({
+      user_id:
+        supabaseUserId,
+
+      intro_started_at:
+        introStartedAt,
+
+      intro_ends_at:
+        introEndsAt
+    });
+
+  /*
+   * 23505 = unique violation.
+   *
+   * Since user_id is the primary key,
+   * this means the account already has
+   * an intro record.
+   *
+   * That is expected during Stripe webhook
+   * retries, so do NOT overwrite/reset it.
+   */
+  if (
+    error &&
+    error.code !== '23505'
+  ) {
+    throw new Error(
+      `Failed to create intro usage record: ${error.message}`
+    );
+  }
+
+  if (error?.code === '23505') {
+    console.log(
+      'INTRO USAGE ALREADY EXISTS:',
+      {
+        userId:
+          supabaseUserId
+      }
+    );
+
+    return;
+  }
+
+  console.log(
+    'INTRO USAGE CREATED:',
+    {
+      userId:
+        supabaseUserId,
+
+      introStartedAt,
+
+      introEndsAt
+    }
+  );
+}
+
+/*
  * Finds the SneakSnipe account that owns
  * a Stripe subscription.
  */
@@ -346,6 +456,7 @@ function getInvoiceSubscriptionId(
  * 2. Save it as the Stripe customer's default.
  * 3. Create the $30/month subscription.
  * 4. Give that subscription a 7-day trial.
+ * 5. Create the user's permanent intro_usage row.
  *
  * Because the customer already paid $1 separately,
  * this Stripe "trial" represents the remainder
@@ -482,6 +593,21 @@ async function handleIntroCheckout(
       }
     );
 
+  /*
+   * Create this before returning success from
+   * the webhook.
+   *
+   * Stripe timestamps become the authoritative
+   * start/end dates for the intro period.
+   */
+  await ensureIntroUsage(
+    supabaseUserId,
+    subscription
+  );
+
+  /*
+   * Keep billing state synchronized separately.
+   */
   await syncSubscription(
     subscription,
     supabaseUserId
@@ -498,6 +624,9 @@ async function handleIntroCheckout(
 
       subscriptionId:
         subscription.id,
+
+      trialStart:
+        subscription.trial_start,
 
       trialEnd:
         subscription.trial_end
