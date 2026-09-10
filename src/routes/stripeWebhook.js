@@ -111,7 +111,7 @@ function getSubscriptionPeriodEnd(subscription) {
   }
 
   /*
-   * Last fallback for canceled subscriptions.
+   * Last fallback for scheduled cancellation.
    */
   if (
     typeof subscription.cancel_at === 'number'
@@ -243,6 +243,10 @@ async function syncSubscription(
       subscription
     );
 
+  const cancelScheduled =
+    subscription.cancel_at_period_end === true ||
+    typeof subscription.cancel_at === 'number';
+
   const {
     error
   } = await supabase
@@ -265,8 +269,7 @@ async function syncSubscription(
           currentPeriodEnd,
 
         cancel_at_period_end:
-          subscription
-            .cancel_at_period_end === true,
+          cancelScheduled,
 
         updated_at:
           new Date().toISOString()
@@ -285,15 +288,19 @@ async function syncSubscription(
   console.log(
     'SUBSCRIPTION SYNCED:',
     {
-      userId: supabaseUserId,
+      userId:
+        supabaseUserId,
+
       subscriptionId:
         subscription.id,
+
       status:
         subscription.status,
+
       currentPeriodEnd,
+
       cancelAtPeriodEnd:
-        subscription
-          .cancel_at_period_end === true
+        cancelScheduled
     }
   );
 }
@@ -485,10 +492,13 @@ async function handleIntroCheckout(
     {
       userId:
         supabaseUserId,
+
       checkoutSessionId:
         session.id,
+
       subscriptionId:
         subscription.id,
+
       trialEnd:
         subscription.trial_end
     }
@@ -664,8 +674,10 @@ async function stripeWebhook(
       {
         eventId:
           event.id,
+
         eventType:
           event.type,
+
         error:
           error instanceof Error
             ? error.message
