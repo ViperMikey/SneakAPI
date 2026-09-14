@@ -12,7 +12,7 @@ const persistentCache = require('./persistentCache');
   structure changes so old cached responses
   cannot leak into the frontend.
 */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 function sleep(ms) {
   return new Promise(resolve =>
@@ -534,7 +534,7 @@ async function getMarketData(styleId) {
     );
 
   /*
-    v3 prevents the old v2 StockX response
+    v4 prevents the old v3 StockX response
     shape from being returned from memory.
   */
   const cacheKey =
